@@ -1,59 +1,51 @@
 import streamlit as st
 import yt_dlp
-import os, tempfile, shutil, time
+import os
+import tempfile
+import shutil
+import time
 
 st.set_page_config(page_title="Smart Video Downloader", layout="centered")
-st.title("🎬 Smart Video Downloader (YouTube / Instagram)")
-st.caption("1080p gacha yuklab olish")
+
+st.title("🎬 Smart Video Downloader")
+st.write("YouTube va Instagram videolarni yuklab olish (1080p gacha)")
 
 url = st.text_input("🔗 Video linkni kiriting:")
 
-# --- Session state for progress ---
-if "progress" not in st.session_state:
-    st.session_state.progress = 0.0
-if "status" not in st.session_state:
-    st.session_state.status = ""
-
-progress_bar = st.progress(0.0, text="")
+# Progress
+progress_bar = st.progress(0)
+status_text = st.empty()
 
 def progress_hook(d):
-    if d.get("status") == "downloading":
-        total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-        downloaded = d.get("downloaded_bytes", 0)
-        if total > 0:
-            p = min(downloaded / total, 1.0)
-            st.session_state.progress = p
-            st.session_state.status = f"Yuklanmoqda… {int(p*100)}%"
-    elif d.get("status") == "finished":
-        st.session_state.progress = 1.0
-        st.session_state.status = "Birlashtirilmoqda (audio+video)…"
+    if d['status'] == 'downloading':
+        total = d.get('total_bytes') or d.get('total_bytes_estimate') or 1
+        downloaded = d.get('downloaded_bytes', 0)
+        percent = int(downloaded / total * 100)
+        progress_bar.progress(percent)
+        status_text.text(f"Yuklanmoqda... {percent}%")
+    elif d['status'] == 'finished':
+        progress_bar.progress(100)
+        status_text.text("Birlashtirilmoqda...")
 
-def is_valid(u: str) -> bool:
-    u = u.lower()
-    return any(x in u for x in ["youtube.com", "youtu.be", "instagram.com"])
+def is_valid(u):
+    return "youtube" in u or "youtu.be" in u or "instagram" in u
 
-col1, col2 = st.columns([1,1])
-quality = col1.selectbox("🎯 Sifat", ["Best (<=1080p)", "720p", "480p"])
-cleanup = col2.checkbox("📂 Yuklab bo‘lgach faylni o‘chirish", value=True)
+quality = st.selectbox("🎯 Sifatni tanlang", ["1080p", "720p", "480p"])
+cleanup = st.checkbox("📂 Yuklab bo‘lgach faylni o‘chirish", value=True)
 
 if st.button("⬇️ Download"):
     if not url:
-        st.warning("Link kiriting.")
-        st.stop()
-    if not is_valid(url):
-        st.error("Faqat YouTube yoki Instagram link qo‘llab-quvvatlanadi.")
+        st.warning("Link kiriting!")
         st.stop()
 
-    # temp papka
-    tmpdir = tempfile.mkdtemp(prefix="vdl_")
+    if not is_valid(url):
+        st.error("Faqat YouTube yoki Instagram link qo‘llab-quvvatlanadi!")
+        st.stop()
+
+    tmpdir = tempfile.mkdtemp()
 
     try:
-        st.session_state.progress = 0.0
-        st.session_state.status = "Boshlanmoqda…"
-        progress_bar.progress(0.0, text="Boshlanmoqda…")
-
-        # format tanlash
-        if quality == "Best (<=1080p)":
+        if quality == "1080p":
             fmt = "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
         elif quality == "720p":
             fmt = "bestvideo[height<=720]+bestaudio/best[height<=720]"
@@ -62,36 +54,35 @@ if st.button("⬇️ Download"):
 
         ydl_opts = {
             "format": fmt,
-            "outtmpl": os.path.join(tmpdir, "%(title).80s.%(ext)s"),
+            "outtmpl": os.path.join(tmpdir, "%(title)s.%(ext)s"),
             "merge_output_format": "mp4",
-            "noplaylist": True,
             "progress_hooks": [progress_hook],
-            # Instagram ba’zi hollarda UA talab qiladi:
-            "http_headers": {"User-Agent": "Mozilla/5.0"},
+            "noplaylist": True,
             "quiet": True,
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0"
+            }
         }
 
-        with st.spinner("Yuklab olinmoqda…"):
+        with st.spinner("⏳ Yuklab olinmoqda..."):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 filename = ydl.prepare_filename(info)
 
-        # Agar merge bo‘lsa, ext mp4 bo‘lishi mumkin
+        # Agar mp4 merge bo‘lsa
         base, _ = os.path.splitext(filename)
         final_file = base + ".mp4" if os.path.exists(base + ".mp4") else filename
 
-        progress_bar.progress(1.0, text="Tayyor!")
-
         st.success("✅ Tayyor!")
 
-        # Thumbnail (agar bor bo‘lsa)
-        thumb = info.get("thumbnail")
-        if thumb:
-            st.image(thumb, caption=info.get("title", "Preview"), use_column_width=True)
+        # Thumbnail
+        if "thumbnail" in info:
+            st.image(info["thumbnail"], caption=info.get("title", ""), use_column_width=True)
 
+        # Download button
         with open(final_file, "rb") as f:
             st.download_button(
-                label="📥 Video yuklab olish",
+                label="📥 Yuklab olish",
                 data=f,
                 file_name=os.path.basename(final_file),
                 mime="video/mp4"
@@ -101,8 +92,9 @@ if st.button("⬇️ Download"):
         st.error(f"❌ Xatolik: {e}")
 
     finally:
-        # foydalanuvchi yuklab olgandan keyin tozalash (bir oz kechiktirib)
         if cleanup:
             time.sleep(2)
             try:
-                shutil.rmtree(tmp
+                shutil.rmtree(tmpdir, ignore_errors=True)
+            except:
+                pass
